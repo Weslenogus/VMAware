@@ -50,13 +50,13 @@ GOOS=windows GOARCH=amd64 go build ./...
 GOOS=darwin  GOARCH=arm64 go build ./...
 ```
 
-WASI (compiles and runs cleanly — see Limitations for what this actually
-reports):
+WASI (a real, working subset — see Limitations for exactly what runs):
 
 ```sh
 GOOS=wasip1 GOARCH=wasm go build -o vmaware.wasm ./cmd/vmaware
-# with a pure-Go WASI runtime (github.com/tetratelabs/wazero/cmd/wazero):
-wazero run -mount /proc:/proc -mount /sys:/sys vmaware.wasm -b
+# with a pure-Go WASI runtime (github.com/tetratelabs/wazero/cmd/wazero),
+# mounting the paths the file-based techniques read from:
+wazero run -mount /:/ vmaware.wasm -b
 ```
 
 Browser (pure scoring engine, see Limitations):
@@ -74,17 +74,41 @@ instruction, no MSR access, no registry, no arbitrary syscalls, and no
 ability to run injected native code. That's true independent of language or
 library choice.
 
-- **`GOOS=wasip1` (WASI)**: builds and runs cleanly (verified with
-  `wazero`), but reports close to nothing. This mirrors the upstream C++
-  exactly, not a Go-specific gap: `techniques_linux.go` and friends are
-  gated by `//go:build linux`, the literal equivalent of the source's `#if
-  VMAWARE_LINUX` — WASI was never a platform branch in the original either,
-  so there is no "Linux-ish" fallback to fall into, by design. Only the
-  cross-platform CPUID-based techniques even attempt to run, and correctly
-  report false (WASM has no CPUID instruction, full stop). If you want the
-  file/proc/sysfs checks to run under WASI, that would be new platform
-  support beyond what upstream defines — deliberately left out rather than
-  invented.
+- **`GOOS=wasip1` (WASI)**: the Linux file/proc/sysfs technique set
+  (`techniques_linux_files.go` and `techniques_linux_shared.go`) is tagged
+  `//go:build linux || wasip1` and genuinely runs under WASI, given a host
+  that mounts the paths it reads — verified for real with `wazero` on this
+  project's own dev container, correctly reporting itself as a KVM guest
+  (`Devices`, `Temperature`, `HWMon`, `CGroup` all fire; `Percentage: 100`).
+  Two things still can't work, inherently:
+  - **CPUID-based checks** (`VMID`, `HYPERVISOR_BIT`, `HYPERVISOR_STR`,
+    `CPU_BRAND`, `BOCHS_CPU`, ...) always report false — WASM has no CPUID
+    instruction, full stop, independent of the OS-level sandbox.
+  - **The three techniques that shell out** (`SYSTEMD`, `DMIDECODE`,
+    `DMESG`, via `sysResult`/`exec.Command`) can locate the binary
+    (`os.Stat` works fine) but can never run it — WASI preview 1 has no
+    process-spawn syscall at all. `DMIDECODE` and `DMESG` degrade cleanly
+    to "not detected" (they explicitly check for empty output first).
+    `SYSTEMD` does not, and this is a genuine upstream quirk this port
+    faithfully preserves rather than fixing: `systemd_virt()`'s
+    `sys_result()` call (`vmaware.hpp` ~5406) returns an empty (never
+    null) string on a `popen()` failure, the call site's `result ==
+    nullptr` guard can therefore never fire (dead code — the same pattern
+    the macOS port's `mac_sip()` comment already flags for its own copy of
+    this helper), and `"" != "none"` is `true` — so a failed exec reads as
+    "virtualized". On real Linux this is a near-impossible edge case
+    (`popen` essentially never fails for an existing, executable binary);
+    under WASI it is the *only* possible outcome, so `SYSTEMD` will always
+    report `true` there whenever the binary merely exists on the mounted
+    filesystem. Not patched, because doing so would silently diverge from
+    upstream's actual (if latent) behavior — flagged here instead so it's
+    never a surprise.
+  - The raw non-blocking-read helpers `KMSG` and `WSL_PROC` need
+    (`golang.org/x/sys/unix`'s `Open`/`Read`/`EAGAIN`, which don't exist
+    for wasip1) have a second, portable implementation for this target
+    using `os.File.SetReadDeadline` instead (`syscalls_wasip1.go`,
+    alongside the exact original raw-syscall version kept for Linux in
+    `syscalls_linux.go`) — same behavior, standard-library-only.
 - **`GOOS=js` (browser)**: there is no filesystem, no CPUID, nothing to
   probe at all. Rather than fake it, `wasm/browser` exposes a narrower,
   genuinely useful thing: VMAware's *scoring, brand-merge, and wording*
