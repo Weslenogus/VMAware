@@ -13,8 +13,6 @@ import (
 	"bytes"
 	"strings"
 	"unsafe"
-
-	"golang.org/x/sys/windows"
 )
 
 func init() {
@@ -452,16 +450,19 @@ func swap32(v uint32) uint32 {
 }
 
 func firmwareTechnique() bool {
-	const acpiSignature = 0x41435049 // 'ACPI' as a big-endian-packed DWORD, matches fourCC("ACPI")
-	_ = fourCC
+	acpiSignature := fourCC("ACPI")
 
 	tables := enumFirmwareTables(acpiSignature)
 	if tables == nil {
 		return false
 	}
 
-	// DSDT special fetch.
-	dsdtSwapped := swap32(0x44534454) // 'DSDT'
+	// DSDT special fetch: GetSystemFirmwareTable's TableID parameter expects
+	// the table signature in the same natural byte order
+	// EnumSystemFirmwareTables returns (i.e. the ASCII bytes read as a
+	// little-endian DWORD), not the multi-character-constant convention
+	// 'DSDT' itself uses, hence the byte swap.
+	dsdtSwapped := swap32(fourCC("DSDT"))
 	if buf, ok := getFirmwareTable(acpiSignature, dsdtSwapped); ok {
 		if scanFirmwareBuffer(buf, true) {
 			return true
@@ -476,9 +477,7 @@ func firmwareTechnique() bool {
 		}
 	}
 
-	smbProviders := []uint32{0x46495254 /* not used */, 0}
-	_ = smbProviders
-	for _, prov := range []uint32{fourCCLiteral('F', 'I', 'R', 'M'), fourCCLiteral('R', 'S', 'M', 'B')} {
+	for _, prov := range []uint32{fourCC("FIRM"), fourCC("RSMB")} {
 		provTables := enumFirmwareTables(prov)
 		for _, tableID := range provTables {
 			if buf, ok := getFirmwareTable(prov, tableID); ok {
@@ -491,12 +490,3 @@ func firmwareTechnique() bool {
 
 	return false
 }
-
-// fourCCLiteral packs 4 ASCII bytes into a DWORD exactly like MSVC/GCC's
-// multi-character constant 'XXXX' does: the first character ends up in the
-// least significant byte.
-func fourCCLiteral(a, b, c, d byte) uint32 {
-	return uint32(a) | uint32(b)<<8 | uint32(c)<<16 | uint32(d)<<24
-}
-
-var _ = windows.STATUS_SUCCESS
