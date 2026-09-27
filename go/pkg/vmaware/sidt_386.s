@@ -1,0 +1,17 @@
+//go:build linux
+
+#include "textflag.h"
+
+// func rawSIDT(buf *byte)
+//
+// Encodes "SIDT [DI]" directly as its opcode bytes (0F 01 /1 with ModRM
+// mod=00,reg=001,rm=111 -> 0x0F), since the Go assembler has no SIDT
+// mnemonic. This stores the 6-byte IDTR pseudo-descriptor (2-byte limit +
+// 4-byte base) at the address in DI -- a single hardware instruction, not
+// code injection.
+TEXT ·rawSIDT(SB), NOSPLIT, $0-4
+	MOVL buf+0(FP), DI
+	BYTE $0x0F
+	BYTE $0x01
+	BYTE $0x0F
+	RET

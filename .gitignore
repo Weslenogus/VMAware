@@ -70,3 +70,10 @@ packages/
 auxiliary/test.cpp
 .devcontainer/
 !gem/test/
+
+# The Go port's package is named "vmaware" (go/pkg/vmaware) and its CLI
+# command directory is also named "vmaware" (go/cmd/vmaware); un-ignore them
+# specifically since the bare "vm"/"vmaware" patterns above (meant for
+# root-level build binaries) would otherwise match at any depth.
+!go/pkg/vmaware/
+!go/cmd/vmaware/

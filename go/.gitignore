@@ -1,0 +1,4 @@
+/bin/
+*.wasm
+wasm_exec.js
+results.json
