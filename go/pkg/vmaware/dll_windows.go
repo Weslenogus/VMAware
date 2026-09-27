@@ -51,3 +51,17 @@ func callStdcall(p *windows.LazyProc, args ...uintptr) (uintptr, uintptr, error)
 	r1, r2, err := p.Call(args...)
 	return r1, r2, err
 }
+
+// getModuleHandle mirrors GetModuleHandleW(name): x/sys/windows only wraps
+// the Ex form, so this is a thin helper over that.
+func getModuleHandle(name string) (windows.Handle, error) {
+	namePtr, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return 0, err
+	}
+	var h windows.Handle
+	if err := windows.GetModuleHandleEx(0, namePtr, &h); err != nil {
+		return 0, err
+	}
+	return h, nil
+}

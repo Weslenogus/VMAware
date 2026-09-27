@@ -9,3 +9,4 @@ package vmaware
 func smswProbe() uint32
 func sldtProbe(out *byte)
 func vpcInvalidProbe() uint32
+func strProbe() uint16

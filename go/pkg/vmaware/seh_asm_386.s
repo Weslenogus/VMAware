@@ -84,3 +84,11 @@ TEXT ·vpcInvalidProbe(SB), NOSPLIT, $0-4
 vpcinvalid_done:
 	MOVL CX, ret+0(FP)
 	RET
+
+// func strProbe() uint16
+// vmware_str(): STR (store task register) is not privileged and always
+// succeeds in ring 3, so this needs no fault guard.
+TEXT ·strProbe(SB), NOSPLIT, $0-2
+	BYTE $0x0F; BYTE $0x00; BYTE $0xC8 // STR AX (ModRM 11 001 000 = /1, AX)
+	MOVW AX, ret+0(FP)
+	RET

@@ -52,12 +52,7 @@ var dllBrandTable = []struct {
 
 func dllTechnique() bool {
 	for _, x := range dllBrandTable {
-		namePtr, err := windows.UTF16PtrFromString(x.name)
-		if err != nil {
-			continue
-		}
-		h, err := windows.GetModuleHandle(x.name)
-		_ = namePtr
+		h, err := getModuleHandle(x.name)
 		if err == nil && h != 0 {
 			return Add(x.brand)
 		}
@@ -72,13 +67,13 @@ var (
 )
 
 func wineTechnique() bool {
-	if h, err := windows.GetModuleHandle("ntdll.dll"); err == nil {
+	if h, err := getModuleHandle("ntdll.dll"); err == nil {
 		if p, _ := windows.GetProcAddress(h, "wine_get_version"); p != 0 {
 			return Add(BrandWine)
 		}
 	}
 
-	kernel32, err := windows.GetModuleHandle("kernel32.dll")
+	kernel32, err := getModuleHandle("kernel32.dll")
 	if err != nil {
 		return false
 	}
@@ -87,8 +82,9 @@ func wineTechnique() bool {
 	}
 
 	if procMulDiv != nil {
-		const intMin = -2147483648
-		r1, _, _ := procMulDiv.Call(1, uintptr(uint32(intMin)), uintptr(uint32(intMin)))
+		var intMin int32 = -2147483648
+		arg := uintptr(uint32(intMin))
+		r1, _, _ := procMulDiv.Call(1, arg, arg)
 		if int32(r1) == 0 {
 			return Add(BrandWine)
 		}
@@ -118,33 +114,33 @@ func wineTechnique() bool {
 var procNtPowerInformation = procOrNil(modNtdll, "NtPowerInformation")
 
 type systemPowerCapabilities struct {
-	PowerButtonPresent  byte
-	SleepButtonPresent  byte
-	LidPresent          byte
-	SystemS1            byte
-	SystemS2            byte
-	SystemS3            byte
-	SystemS4            byte
-	SystemS5            byte
-	HiberFilePresent    byte
-	FullWake            byte
-	VideoDimPresent     byte
-	ApmPresent          byte
-	UpsPresent          byte
-	ThermalControl      byte
-	ProcessorThrottle   byte
-	ProcessorMinThrottle byte
-	ProcessorMaxThrottle byte
-	FastSystemS4         byte
-	Hiberboot            byte
-	WakeAlarmPresent     byte
-	AoAc                 byte
-	DiskSpinDown         byte
-	HiberFileType        byte
+	PowerButtonPresent        byte
+	SleepButtonPresent        byte
+	LidPresent                byte
+	SystemS1                  byte
+	SystemS2                  byte
+	SystemS3                  byte
+	SystemS4                  byte
+	SystemS5                  byte
+	HiberFilePresent          byte
+	FullWake                  byte
+	VideoDimPresent           byte
+	ApmPresent                byte
+	UpsPresent                byte
+	ThermalControl            byte
+	ProcessorThrottle         byte
+	ProcessorMinThrottle      byte
+	ProcessorMaxThrottle      byte
+	FastSystemS4              byte
+	Hiberboot                 byte
+	WakeAlarmPresent          byte
+	AoAc                      byte
+	DiskSpinDown              byte
+	HiberFileType             byte
 	AoAcConnectivitySupported byte
-	spare3               [6]byte
-	SystemBatteriesPresent byte
-	BatteriesAreShortTerm  byte
+	spare3                    [6]byte
+	SystemBatteriesPresent    byte
+	BatteriesAreShortTerm     byte
 	// BatteryScale[3] and remaining reserved fields aren't needed; the
 	// buffer we pass NtPowerInformation is sized to the real struct so the
 	// kernel writes past this Go view harmlessly (see powerCapabilitiesTechnique).
@@ -273,11 +269,6 @@ func gamarueTechnique() bool {
 	productID := utf16LEToString(data)
 
 	const targetLength = 23
-	if len([]rune(productID)) != targetLength && len(productID) != targetLength {
-		// utf16LEToString already trims a trailing NUL; fall through to the
-		// exact upstream comparison below regardless.
-	}
-	productID = strings.TrimRight(productID, "\x00")
 	if len(productID) != targetLength {
 		return false
 	}
@@ -292,22 +283,13 @@ func gamarueTechnique() bool {
 
 // utf16LEToString decodes a raw little-endian UTF-16 byte slice (no
 // alignment guarantees) into a Go string, stopping at a NUL code unit if
-// present.
+// present (matching windows.UTF16ToString's own behavior).
 func utf16LEToString(b []byte) string {
-	n := len(b) / 2
-	units := make([]uint16, 0, n)
-	for i := 0; i < n; i++ {
-		u := uint16(b[i*2]) | uint16(b[i*2+1])<<8
-		if u == 0 {
-			break
-		}
-		units = append(units, u)
+	units := make([]uint16, len(b)/2)
+	for i := range units {
+		units[i] = uint16(b[i*2]) | uint16(b[i*2+1])<<8
 	}
-	return string(utf16Decode(units))
-}
-
-func utf16Decode(units []uint16) []rune {
-	return []rune(windows.UTF16ToString(append(units, 0)))
+	return windows.UTF16ToString(units)
 }
 
 // --- Mutex (@implements VM::MUTEX) ----------------------------------------
@@ -371,15 +353,15 @@ func cuckooTechnique() bool {
 	}
 
 	const (
-		fileReadAttributes         = 0x0080
-		fileShareRead              = 0x00000001
-		fileShareWrite             = 0x00000002
-		fileShareDelete            = 0x00000004
-		fileOpen                   = 0x00000001
-		fileSynchronousIONonalert  = 0x00000020
-		fileDirectoryFile          = 0x00000001
-		fileNonDirectoryFile       = 0x00000040
-		synchronize                = 0x00100000
+		fileReadAttributes        = 0x0080
+		fileShareRead             = 0x00000001
+		fileShareWrite            = 0x00000002
+		fileShareDelete           = 0x00000004
+		fileOpen                  = 0x00000001
+		fileSynchronousIONonalert = 0x00000020
+		fileDirectoryFile         = 0x00000001
+		fileNonDirectoryFile      = 0x00000040
+		synchronize               = 0x00100000
 	)
 
 	targets := []target{
@@ -420,8 +402,8 @@ func cuckooTechnique() bool {
 // --- Display (@implements VM::DISPLAY) ------------------------------------
 
 var (
-	procGetDC        = procOrNil(modUser32, "GetDC")
-	procReleaseDC    = procOrNil(modUser32, "ReleaseDC")
+	procGetDC         = procOrNil(modUser32, "GetDC")
+	procReleaseDC     = procOrNil(modUser32, "ReleaseDC")
 	procGetDeviceCaps = procOrNil(modGdi32, "GetDeviceCaps")
 )
 
@@ -633,7 +615,7 @@ func virtualRegistryTechnique() bool {
 var (
 	procNtAllocateVirtualMemory = procOrNil(modNtdll, "NtAllocateVirtualMemory")
 	procNtFreeVirtualMemory     = procOrNil(modNtdll, "NtFreeVirtualMemory")
-	procNtQueryKey               = procOrNil(modNtdll, "NtQueryKey")
+	procNtQueryKey              = procOrNil(modNtdll, "NtQueryKey")
 )
 
 func driversTechnique() bool {
@@ -658,13 +640,13 @@ func driversScanModules() BrandEnum {
 	}
 
 	size := uintptr(needed) + 4096*4
-	var base uintptr
+	var base unsafe.Pointer
 	regionSize := size
 	const memCommit = 0x1000
 	const memReserve = 0x2000
 	const pageReadWrite = 0x04
 	r1, _, _ := procNtAllocateVirtualMemory.Call(uintptr(windows.CurrentProcess()), uintptr(unsafe.Pointer(&base)), 0, uintptr(unsafe.Pointer(&regionSize)), memCommit|memReserve, pageReadWrite)
-	if int32(r1) < 0 || base == 0 {
+	if int32(r1) < 0 || base == nil {
 		return BrandNullBrand
 	}
 	defer func() {
@@ -673,7 +655,7 @@ func driversScanModules() BrandEnum {
 	}()
 
 	var returnLength uint32
-	moduleErr := windows.NtQuerySystemInformation(systemModuleInformation, unsafe.Pointer(base), uint32(regionSize), &returnLength)
+	moduleErr := windows.NtQuerySystemInformation(systemModuleInformation, base, uint32(regionSize), &returnLength)
 	if moduleErr != nil {
 		return BrandNullBrand
 	}
@@ -695,16 +677,16 @@ func driversScanModules() BrandEnum {
 		return BrandNullBrand
 	}
 
-	numberOfModules := *(*uint32)(unsafe.Pointer(base))
+	numberOfModules := *(*uint32)(base)
 	maxModules := (uintptr(returnLength) - headerSize) / moduleEntrySize
 	if uintptr(numberOfModules) > maxModules {
 		numberOfModules = uint32(maxModules)
 	}
 
 	for i := uint32(0); i < numberOfModules; i++ {
-		entryAddr := base + headerSize + uintptr(i)*moduleEntrySize
-		nameAddr := entryAddr + imageNameOffsetInModule
-		nameBytes := unsafe.Slice((*byte)(unsafe.Pointer(nameAddr)), 256)
+		entryAddr := unsafe.Add(base, headerSize+uintptr(i)*moduleEntrySize)
+		nameAddr := unsafe.Add(entryAddr, imageNameOffsetInModule)
+		nameBytes := unsafe.Slice((*byte)(nameAddr), 256)
 		name := strings.ToLower(cStringFromBytes(nameBytes))
 
 		if strings.Contains(name, "vboxguest") || strings.Contains(name, "vboxmouse") || strings.Contains(name, "vboxsf") {
@@ -761,12 +743,13 @@ func driversScanDeviceClasses() bool {
 		r1, _, _ = procNtQueryKey.Call(uintptr(key), keyFullInformation, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)), uintptr(unsafe.Pointer(&returnedLen)))
 		procNtClose.Call(uintptr(key))
 
+		// KEY_FULL_INFORMATION: LastWriteTime(8) + TitleIndex(4) + ClassOffset(4)
+		// + ClassLength(4) + SubKeys(4) -> SubKeys sits at byte offset 20.
 		const statusBufferOverflow = 0x80000005
+		const subKeysOffset = 20
 		ok := int32(r1) >= 0 || uint32(r1) == statusBufferOverflow
-		const keyFullInfoMinSize = 8 + 4*8 // LastWriteTime(8)+TitleIndex,ClassOffset,ClassLength,SubKeys,MaxNameLen,MaxClassLen,Values,MaxValueNameLen (approx lower bound)
-		if ok && returnedLen >= 24 {
-			subKeys := le32(buf[16:20]) // offsetof(KEY_FULL_INFORMATION, SubKeys) == 8(LastWriteTime)+4(TitleIndex)+4(ClassOffset)+4(ClassLength)=20? see below
-			_ = keyFullInfoMinSize
+		if ok && returnedLen >= subKeysOffset+4 {
+			subKeys := le32(buf[subKeysOffset : subKeysOffset+4])
 			if subKeys > 0 {
 				return Add(BrandQEMU)
 			}
