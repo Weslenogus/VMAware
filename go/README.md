@@ -105,18 +105,34 @@ it's moot for WASM either way (no CPUID, no hardware breakpoints, no native
 code execution). Rather than guess at a byte-for-byte reimplementation that
 can't be verified against the original, these are left as honest stubs.
 
+**Two sub-checks are left out of otherwise-ported Windows techniques**,
+documented inline where they're skipped: `HYPERVISOR_HOOK`'s Dr0/Dr7
+hardware-breakpoint sub-check (`techniques_windows_hook.go`) and
+`CPU_HEURISTIC`'s AVX-512/EVEX probe (`techniques_windows_cpu.go`). Both
+need machine code this port can't validate without real Windows hardware —
+and getting a live debug-register offset wrong doesn't just misdetect, it
+can leave a stray hardware breakpoint armed on the thread for the rest of
+the process's life. The rest of each technique (the PE double-breakpoint
+patch/verify and boundary-straddling-NOP checks in `HYPERVISOR_HOOK`;
+AES-NI/AVX/AVX2/CLZERO and the AMD/Intel chipset cross-checks in
+`CPU_HEURISTIC`) is fully ported.
+
 **`--rich`** (the Windows TUI, `src/cli/windows_tui.hpp`) is not
 implemented; the CLI accepts the flag and falls back to plain output with a
 note.
 
-**`TIMER` is a stub on every platform except Windows** — and this one
-*isn't* a scope cut on this port's part: upstream's `timer()` is entirely
-gated behind `#if (VMAWARE_X86 && VMAWARE_WINDOWS)` with a plain
-unconditional `return false;` for everything else, so non-Windows was
-already a 1:1 stub in the original C++. On Windows it OKs a
-CPUID-vs-reference-clock race and a trap-flag/SEH-latency probe that both
-need the same kind of raw fault-timing this port already declines to fake
-for the nine techniques above.
+**`TIMER` is a stub on every platform, including Windows.** Off Windows
+that's not a scope cut at all: upstream's `timer()` is entirely gated
+behind `#if (VMAWARE_X86 && VMAWARE_WINDOWS)` with a plain unconditional
+`return false;` for everything else, so non-Windows was already a 1:1 stub
+in the original C++. On Windows, upstream's version ORs together a
+CPUID-vs-reference-clock race on a priority-boosted, affinity-pinned thread
+and a trap-flag/SEH-latency probe — the same kind of raw fault-timing this
+port already declines to fake for the nine techniques above, and the
+CPUID-race half additionally needs hard real-time guarantees (locked
+memory, busy-spin timing) Go's GC/scheduler can't reliably provide. Ported
+as an honest stub there too rather than a guess that can't be verified
+without a Windows box to test against.
 
 Everything else — CPUID-based cross-platform checks, the full Linux
 file/proc/sysfs/dmidecode/cgroup set, Windows registry/SetupAPI/ACPI/TBS.dll
