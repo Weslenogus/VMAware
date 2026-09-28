@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || wasip1
 
 package vmaware
 
@@ -12,9 +12,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
-
-	"golang.org/x/sys/unix"
 
 	"github.com/weslenogus/vmaware/go/pkg/vmaware/cpuprobe"
 )
@@ -71,10 +68,15 @@ func sysResult(cmd string) string {
 
 // findExecutable mirrors the repeated "find_binary" lambda (access(path,
 // X_OK) == 0) used by dmidecode()/dmesg(): returns the first path in the
-// list that exists and is executable, or "" if none are.
+// list that exists and is executable, or "" if none are. The real
+// executable-bit check (via golang.org/x/sys/unix.Access, linux-only — see
+// syscalls_linux.go/syscalls_wasip1.go) only matters on the platform that
+// can actually exec() the result; a plain existence check is used
+// elsewhere (see syscalls_wasip1.go) since WASI can't spawn a process
+// either way.
 func findExecutable(paths []string) string {
 	for _, p := range paths {
-		if unix.Access(p, unix.X_OK) == nil {
+		if isExecutablePath(p) {
 			return p
 		}
 	}
@@ -491,48 +493,17 @@ func umlCPU() bool {
 	return false
 }
 
-// kmsg mirrors VM::kmsg (@implements VM::KMSG).
+// kmsg mirrors VM::kmsg (@implements VM::KMSG). The actual non-blocking
+// /dev/kmsg read loop is platform-specific (raw golang.org/x/sys/unix
+// syscalls on Linux, a portable os.File+SetReadDeadline equivalent under
+// wasip1 -- see syscalls_linux.go/syscalls_wasip1.go) since
+// golang.org/x/sys/unix's raw Open/Read/Close don't exist for wasip1.
 func kmsg() bool {
 	if !linuxIsRoot() {
 		return false
 	}
 
-	fd, err := unix.Open("/dev/kmsg", unix.O_RDONLY|unix.O_NONBLOCK, 0)
-	if err != nil {
-		return false
-	}
-	defer unix.Close(fd)
-
-	var sb strings.Builder
-	emptyReads := 0
-	const maxEmptyReads = 10
-	buf := make([]byte, 1024)
-
-	for {
-		n, rerr := unix.Read(fd, buf)
-		switch {
-		case rerr == nil && n > 0:
-			sb.Write(buf[:n])
-			emptyReads = 0
-		case rerr == nil && n == 0:
-			emptyReads++
-			if emptyReads >= maxEmptyReads {
-				goto done
-			}
-			time.Sleep(10 * time.Millisecond)
-		case rerr == unix.EAGAIN || rerr == unix.EWOULDBLOCK:
-			emptyReads++
-			if emptyReads >= maxEmptyReads {
-				goto done
-			}
-			time.Sleep(10 * time.Millisecond)
-		default:
-			goto done
-		}
-	}
-
-done:
-	content := sb.String()
+	content := kmsgReadAvailable()
 	if content == "" {
 		return false
 	}
@@ -649,20 +620,8 @@ func podmanFile() bool {
 
 // wslReadProcNonblock mirrors the "read_proc_nonblock" lambda in
 // VM::wsl_proc_subdir: a single non-blocking read of up to 512 bytes.
-func wslReadProcNonblock(path string) string {
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NONBLOCK, 0)
-	if err != nil {
-		return ""
-	}
-	defer unix.Close(fd)
-
-	buf := make([]byte, 512)
-	n, err := unix.Read(fd, buf)
-	if err != nil || n <= 0 {
-		return ""
-	}
-	return string(buf[:n])
-}
+// (defined per-platform in syscalls_linux.go/syscalls_wasip1.go, since
+// golang.org/x/sys/unix's raw Open/Read don't exist for wasip1.)
 
 // wslProcSubdir mirrors VM::wsl_proc_subdir (@implements VM::WSL_PROC).
 func wslProcSubdir() bool {

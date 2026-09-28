@@ -1,4 +1,4 @@
-//go:build linux && !amd64 && !386
+//go:build (linux || wasip1) && !amd64 && !386
 
 package vmaware
 

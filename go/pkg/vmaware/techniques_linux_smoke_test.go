@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || wasip1
 
 package vmaware
 
